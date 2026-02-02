@@ -1,0 +1,111 @@
+.analytics-page {
+    max-width: 1200px;
+}
+
+/* Conversion Cards */
+.conversion-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-6);
+    margin-bottom: var(--spacing-8);
+}
+
+.conversion-card {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-4);
+}
+
+.conversion-icon {
+    width: 56px;
+    height: 56px;
+    background: rgba(99, 102, 241, 0.15);
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-accent-primary);
+}
+
+.conversion-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.conversion-label {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+.conversion-value {
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
+}
+
+/* Funnel Section */
+.funnel-section {
+    padding: var(--spacing-6);
+}
+
+.funnel-section h2 {
+    margin-bottom: var(--spacing-1);
+}
+
+.funnel-section>.text-secondary {
+    margin-bottom: var(--spacing-6);
+}
+
+.funnel-chart {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-4);
+}
+
+.funnel-bar-container {
+    display: grid;
+    grid-template-columns: 140px 1fr 60px;
+    align-items: center;
+    gap: var(--spacing-4);
+}
+
+.funnel-label {
+    display: flex;
+    flex-direction: column;
+}
+
+.stage-name {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+}
+
+.stage-count {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+.funnel-bar-bg {
+    height: 32px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.funnel-bar {
+    height: 100%;
+    border-radius: var(--radius-md);
+    transition: width var(--transition-slow);
+    min-width: 4px;
+}
+
+.funnel-percent {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    text-align: right;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .conversion-cards {
+        grid-template-columns: 1fr;
+    }
+}
