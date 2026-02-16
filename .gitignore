@@ -9,9 +9,6 @@ frontend/.env.*
 # Unwanted files and debug scripts
 unwanted_files/
 
-
-
-
 # Python
 __pycache__/
 *.py[cod]
