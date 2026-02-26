@@ -3,7 +3,6 @@ import { useState, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { leadsApi, Lead, draftsApi, debugApi, BulkImportResult, emailsApi } from '../lib/api'
-import LeadScoresDisplay from '../components/LeadScoresDisplay'
 import {
     Search,
     Plus,
@@ -190,8 +189,6 @@ export default function Leads() {
                                 <th>Status</th>
                                 <th>Fit</th>
                                 <th>Readiness</th>
-                                <th>Intent</th>
-                                <th>Composite</th>
                                 <th>Industry</th>
                                 <th>Actions</th>
                             </tr>
@@ -473,17 +470,6 @@ function LeadRow({
             </td>
             <td><span className="score-value fit">{formatScore(lead.fit_score)}</span></td>
             <td><span className="score-value readiness">{formatScore(lead.readiness_score)}</span></td>
-            <td><span className="score-value intent">{formatScore(lead.intent_score)}</span></td>
-            <td>
-                <div className="score-cell">
-                    <span className="score-value composite">{formatScore(lead.composite_score)}</span>
-                    {lead.composite_score !== undefined && (
-                        <div className="score-bar">
-                            <div className="score-fill" style={{ width: `${lead.composite_score * 100}%` }} />
-                        </div>
-                    )}
-                </div>
-            </td>
             <td className="text-secondary">{lead.industry || '—'}</td>
             <td>
                 <div className="actions-cell">
@@ -618,9 +604,6 @@ function ResearchPanel({ leadId, onClose }: { leadId: string; onClose: () => voi
                         <div className="research-meta"><span>Researched: {formatDate(data.researched_at)}</span></div>
                     </div>
 
-                    <div className="research-section">
-                        <LeadScoresDisplay leadId={leadId} />
-                    </div>
 
                     {/* Lead Company Analysis */}
                     <div className="research-section">

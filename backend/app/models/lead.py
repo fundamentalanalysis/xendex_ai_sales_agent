@@ -150,6 +150,10 @@ class LeadIntelligence(Base, UUIDMixin):
     industry: Mapped[Optional[str]] = mapped_column(String(100))
     gtm_motion: Mapped[Optional[str]] = mapped_column(String(50))    # enterprise, smb, self-serve, hybrid
     
+    # Computed scoring details (persisted breakdown)
+    fit_breakdown: Mapped[Optional[dict]] = mapped_column(JSONB)
+    readiness_breakdown: Mapped[Optional[dict]] = mapped_column(JSONB)
+    
     # Freshness
     researched_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False)

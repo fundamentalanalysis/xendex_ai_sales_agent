@@ -67,22 +67,18 @@ class FitScoreCalculator:
     
     @staticmethod
     def calculate(
-        industry_match: int, # 0=No, 1=Partial/Unknown ICP, 2=Full Match
-        company_size: str,  # "enterprise", "medium", "small"
-        pain_indicators: int,  # number of pain points found
-        tech_stack_aligned: bool,
+        industry_match_score: float,
+        company_size: str,
+        pain_indicators: int,
+        tech_stack_count: int,
         gtm_alignment: bool
     ) -> Tuple[float, ScoreBreakdown]:
         components = {}
         
         # 1. Industry Match (+30% max)
-        if industry_match == 2:
-            industry_score = 30
-        elif industry_match == 1:
-            industry_score = 15
-        else:
-            industry_score = 0
-        components["Industry Match"] = industry_score
+        # industry_match_score is 0 to 2.0. Scale to 30 points.
+        industry_score = min(industry_match_score * 15, 30)
+        components["Industry Match"] = round(industry_score, 1)
         
         # 2. Company Size (+25% max)
         if company_size == "enterprise":
@@ -93,17 +89,16 @@ class FitScoreCalculator:
             size_score = 5
         components["Company Size"] = size_score
         
-        # 3. Pain Indicators (+15% max)
-        pain_score = min(pain_indicators * 5, 15)
+        # 3. Pain Indicators (+25% max - Raised to allow more variance)
+        pain_score = min(pain_indicators * 4, 25)
         components["Pain Indicators"] = pain_score
         
         # 4. Tech Stack & GTM (+20% max)
-        tech_gtm_score = 0
-        if tech_stack_aligned:
-            tech_gtm_score += 10
-        if gtm_alignment:
-            tech_gtm_score += 10
-        components["Tech Stack & GTM"] = tech_gtm_score
+        # Score based on count of technologies
+        tech_score = min(tech_stack_count * 2.5, 10)
+        gtm_score = 10 if gtm_alignment else 0
+        
+        components["Tech Stack & GTM"] = tech_score + gtm_score
         
         total = min(sum(components.values()), 100.0)
         percentage = min(total / 100.0, 1.0)
@@ -115,10 +110,10 @@ class FitScoreCalculator:
             total_possible=100,
             percentage=percentage,
             notes=[
-                f"Industry alignment: {'✓' if industry_match else '✗'}",
+                f"Industry similarity score: {industry_match_score}",
                 f"Company size: {company_size}",
                 f"Pain points identified: {pain_indicators}",
-                f"Tech stack aligned: {'✓' if tech_stack_aligned else '✗'}",
+                f"Technology matches: {tech_stack_count}",
                 f"GTM alignment: {'✓' if gtm_alignment else '✗'}"
             ]
         )
@@ -146,19 +141,17 @@ class ReadinessScoreCalculator:
     ) -> Tuple[float, ScoreBreakdown]:
         components = {}
         
-        # 1. Website Buying Signals (+35% max)
-        buying_score = min(buying_signals * 10, 35)
+        # 1. Website Buying Signals (+40% max - Raised for variance)
+        buying_score = min(buying_signals * 8, 40)
         components["Website Buying Signals"] = buying_score
         
         # 2. Hiring Intensity (+20% max)
         hiring_base_score = 0
-        hiring_base_score += min(relevant_hiring_roles * 5, 10)
+        hiring_base_score += min(relevant_hiring_roles * 4, 12)
         if hiring_intensity == HiringIntensity.HIGH:
-            hiring_base_score += 10
+            hiring_base_score += 8
         elif hiring_intensity == HiringIntensity.MEDIUM:
-            hiring_base_score += 5
-        elif hiring_intensity == HiringIntensity.LOW:
-            hiring_base_score += 2
+            hiring_base_score += 4
         
         hiring_score = min(hiring_base_score, 20)
         components["Hiring Intensity"] = hiring_score
@@ -284,83 +277,95 @@ class IntentScoreCalculator:
 # ==================== COMPOSITE SCORE CALCULATOR ====================
 class CompositeScoreCalculator:
     """
-    Calculates the final Composite Score as a weighted average
+    Simplified Dual-Threshold Qualification Model.
+    Status = Qualified UNLESS Fit < 30% OR Readiness < 30%.
+    Mathematical composite score is disabled.
     """
     @staticmethod
     def calculate(
         fit_score: float,
         readiness_score: float,
-        intent_score: float,
-        qualification_threshold: float = 0.65,
-        is_fallback: bool = False
+        intent_score: float = 0.0,
+        qualification_threshold: float = 0.40,
+        is_fallback: bool = False,
+        previous_status: str = "new"
     ) -> Tuple[float, str]:
-        # Recommended Weights: Fit (40%), Readiness (30%), Intent (30%)
-        composite = (fit_score * 0.40) + (readiness_score * 0.30) + (intent_score * 0.30)
-        
-        # Fallback Confidence Reduction: -15%
-        if is_fallback:
-            composite *= 0.85
+        # Qualification Hysteresis: If already qualified, allow a small buffer (5%) 
+        # to prevent "flip-flopping" due to minor scraping variance.
+        effective_threshold = qualification_threshold
+        if previous_status == "qualified":
+            effective_threshold = max(0.30, qualification_threshold - 0.05) # 35% buffer if already qualified
             
-        composite = max(0.0, min(1.0, composite))
-        
-        # Guardrail: Auto-disqualify if Fit is very poor (<35%)
-        if fit_score < 0.35:
-            status = "not_qualified"
+        # Qualification Rule: Both must pass the effective threshold
+        if fit_score >= effective_threshold and readiness_score >= effective_threshold:
+            status = "qualified"
         else:
-            status = "qualified" if composite >= qualification_threshold else "not_qualified"
+            status = "not_qualified"
             
-        return round(composite, 2), status
+        # Composite score is removed - returning 0.0
+        return 0.0, status
 
 
 # ==================== MASTER SCORING ENGINE ====================
 class MasterScoringEngine:
-    def __init__(self, qualification_threshold: float = 0.65):
+    def __init__(self, qualification_threshold: float = 0.40):
         self.threshold = qualification_threshold
         self.fit_calc = FitScoreCalculator()
         self.readiness_calc = ReadinessScoreCalculator()
-        self.intent_calc = IntentScoreCalculator()
+        self.intent_calc = IntentScoreCalculator() # Kept for class compatibility but logic is bypassed
         self.composite_calc = CompositeScoreCalculator()
     
     def calculate_all_scores(
         self,
-        industry_match: int,
+        industry_match_score: float,
         company_size: str,
         pain_indicators: int,
-        tech_stack_aligned: bool,
+        tech_stack_count: int,
         gtm_alignment: bool,
         buying_signals: int,
         hiring_intensity: str,
         relevant_hiring_roles: int,
         contact_seniority: str,
         job_tenure_days: int,
-        funding_rounds: int,
-        new_executives: int,
-        expansions: int,
-        days_since_news: int,
-        linkedin_posts: int,
-        strategic_initiatives: int,
-        contact_is_exec_founder: bool,
-        is_fallback: bool = False
+        # Following params are legacy from Intent dimension, kept for signature compatibility
+        funding_rounds: int = 0,
+        new_executives: int = 0,
+        expansions: int = 0,
+        days_since_news: int = 365,
+        linkedin_posts: int = 0,
+        strategic_initiatives: int = 0,
+        contact_is_exec_founder: bool = False,
+        is_fallback: bool = False,
+        **extra_kwargs # Catch-all for varied research outputs
     ) -> LeadScores:
         
+        # 1. Fit Dimension
+        fit_score, fit_breakdown = self.fit_calc.calculate(
+            industry_match_score=industry_match_score,
+            company_size=company_size,
+            pain_indicators=pain_indicators,
+            tech_stack_count=tech_stack_count,
+            gtm_alignment=gtm_alignment
+        )
+        
+        # 2. Readiness Dimension
         try:
-            hiring_intensity_enum = HiringIntensity[hiring_intensity.upper()]
+            hiring_val = hiring_intensity.upper() if isinstance(hiring_intensity, str) else "NONE"
+            hiring_intensity_enum = HiringIntensity[hiring_val]
         except KeyError:
             hiring_intensity_enum = HiringIntensity.NONE
             
         try:
-            contact_seniority_enum = SenioritLevel[contact_seniority.upper()]
+            seniority_val = contact_seniority.upper() if isinstance(contact_seniority, str) else "MID_LEVEL"
+            # Map common variants
+            if seniority_val == "MID": seniority_val = "MID_LEVEL"
+            if seniority_val == "ENTRY": seniority_val = "ENTRY_LEVEL"
+            if seniority_val == "C-SUITE": seniority_val = "EXECUTIVE"
+            
+            contact_seniority_enum = SenioritLevel[seniority_val]
         except KeyError:
-            contact_seniority_enum = SenioritLevel.ENTRY_LEVEL
-        
-        fit_score, fit_breakdown = self.fit_calc.calculate(
-            industry_match=industry_match,
-            company_size=company_size,
-            pain_indicators=pain_indicators,
-            tech_stack_aligned=tech_stack_aligned,
-            gtm_alignment=gtm_alignment
-        )
-        
+            contact_seniority_enum = SenioritLevel.MID_LEVEL
+
         readiness_score, readiness_breakdown = self.readiness_calc.calculate(
             buying_signals=buying_signals,
             hiring_intensity=hiring_intensity_enum,
@@ -369,26 +374,28 @@ class MasterScoringEngine:
             job_tenure_days=job_tenure_days
         )
         
-        intent_score, intent_breakdown = self.intent_calc.calculate(
-            funding_rounds=funding_rounds,
-            new_executives=new_executives,
-            expansions=expansions,
-            days_since_news=days_since_news,
-            linkedin_posts=linkedin_posts,
-            strategic_initiatives=strategic_initiatives,
-            contact_is_exec_founder=contact_is_exec_founder,
-            pain_indicators=pain_indicators
+        # 3. Intent Dimension (REMOVED - Returning Empty/Neutral)
+        intent_score = 0.0
+        intent_breakdown = ScoreBreakdown(
+            category="Intent Score",
+            base_score=0,
+            components={},
+            total_possible=100,
+            percentage=0,
+            notes=["Intent dimension disabled per architectural request."]
         )
         
+        # 4. Final Qualification (Dual Threshold Model with Hysteresis)
         composite_score, qualification_status = self.composite_calc.calculate(
             fit_score=fit_score,
             readiness_score=readiness_score,
             intent_score=intent_score,
             qualification_threshold=self.threshold,
-            is_fallback=is_fallback
+            is_fallback=is_fallback,
+            previous_status=extra_kwargs.get("previous_status", "new")
         )
         
-        logger.info(f"Calculated scores - Fit: {fit_score*100}%, Readiness: {readiness_score*100}%, Intent: {intent_score*100}%, Composite: {composite_score*100}% ({qualification_status}) [{'FALLBACK' if is_fallback else 'DIRECT'}]")
+        logger.info(f"Dual-Threshold Scoring - Fit: {fit_score*100}%, Readiness: {readiness_score*100}%, Status: {qualification_status}")
         
         return LeadScores(
             fit_score=fit_score,
@@ -410,15 +417,10 @@ class MasterScoringEngine:
             "readiness_in_range": 0.0 <= lead_scores.readiness_score <= 1.0,
             "intent_in_range": 0.0 <= lead_scores.intent_score <= 1.0,
             "composite_in_range": 0.0 <= lead_scores.composite_score <= 1.0,
-            "composite_formula_correct": abs(
-                lead_scores.composite_score - 
-                ((lead_scores.fit_score * 0.40) + 
-                 (lead_scores.readiness_score * 0.30) + 
-                 (lead_scores.intent_score * 0.30))
-            ) < 0.15, # allow more tolerance for fallback multiplier
+            "composite_formula_correct": True, # Always true now that composite is removed
             "qualification_status_matches": (
-                (lead_scores.qualification_status == "qualified" and lead_scores.composite_score >= self.threshold) or
-                (lead_scores.qualification_status == "not_qualified" and lead_scores.composite_score < self.threshold)
+                (lead_scores.qualification_status == "qualified" and lead_scores.fit_score >= self.threshold and lead_scores.readiness_score >= self.threshold) or
+                (lead_scores.qualification_status == "not_qualified" and (lead_scores.fit_score < self.threshold or lead_scores.readiness_score < self.threshold))
             )
         }
         return validations
@@ -434,13 +436,12 @@ class SimpleDataExtractor:
                     your_inds=getattr(intel, 'your_industries', 'N/A'))
 
         pain_count = len(intel.lead_pain_indicators) if intel and intel.lead_pain_indicators else 0
-        tech_matched = len(intel.lead_tech_stack) > 0 if intel and intel.lead_tech_stack else False
+        tech_count = len(intel.lead_tech_stack) if intel and intel.lead_tech_stack else 0
         
         # Dynamic Industry Match: 0=No, 1=Partial, 2=Full
-        industry_match = 0
+        # We use a float here to allow more variance
+        industry_score_base = 0.0
         
-        # Priority 1: Use researched industry
-        # Priority 2: Use provided lead industry (from CSV/Manual)
         lead_ind_source = None
         if intel and intel.industry and intel.industry.lower() != "not publicly available":
             lead_ind_source = intel.industry.lower()
@@ -448,18 +449,26 @@ class SimpleDataExtractor:
             lead_ind_source = lead.industry.lower()
 
         if lead_ind_source:
-            # If we know what industries we want to match against
             if intel and intel.your_industries:
                 your_inds = [i.strip().lower() for i in intel.your_industries if i]
-                if any(i in lead_ind_source or lead_ind_source in i for i in your_inds):
-                    industry_match = 2 # FULL MATCH
+                # Full match
+                if any(i == lead_ind_source for i in your_inds):
+                    industry_score_base = 2.0
+                # Cross-Industry broader match (e.g. if we serve Technology, Cybersecurity is a match)
+                elif "technology" in your_inds and any(x in lead_ind_source for x in ["software", "cyber", "ai", "platform", "cloud"]):
+                    industry_score_base = 1.8
+                # Keyword match
+                elif any(i in lead_ind_source or lead_ind_source in i for i in your_inds):
+                    industry_score_base = 1.5
+                # Stem match
                 elif any(i[0:4] in lead_ind_source for i in your_inds if len(i) > 4):
-                    industry_match = 1 # PARTIAL MATCH
+                    industry_score_base = 1.2
+                else:
+                    industry_score_base = 0.5 # Low match instead of zero
             else:
-                # No targeted list defined? Treat any valid industry as a general match
-                industry_match = 1 
+                industry_score_base = 1.0 # Neutral match
         
-        # Dynamic Company Size - Default to medium for a better "Qualified" chance if unknown
+        # Dynamic Company Size
         company_size = "medium"
         source_size = getattr(intel, 'company_size', None)
         if source_size:
@@ -469,8 +478,6 @@ class SimpleDataExtractor:
                     company_size = "enterprise"
                 elif any(x in size_raw for x in ["startup", "small", "seed", "series a"]):
                     company_size = "small"
-                else:
-                    company_size = "medium"
 
         # Dynamic GTM Alignment
         gtm_alignment = False
@@ -481,10 +488,10 @@ class SimpleDataExtractor:
                     gtm_alignment = True
 
         result = {
-            "industry_match": industry_match,
+            "industry_match_score": industry_score_base,
             "company_size": company_size,
             "pain_indicators": pain_count,
-            "tech_stack_aligned": tech_matched,
+            "tech_stack_count": tech_count,
             "gtm_alignment": gtm_alignment
         }
         logger.info(f"FIT Inputs for {lead_name}: {result}")
@@ -496,7 +503,7 @@ class SimpleDataExtractor:
         buying_count = len(intel.lead_buying_signals) if intel and intel.lead_buying_signals else 0
         
         # Heuristic Seniority: Use LinkedIn if researched, else use Lead Persona
-        seniority = "senior" # Optimistic default for sales activity
+        seniority = "mid" # Conservative default: assume mid-level unless proven senior
         if intel and intel.linkedin_seniority and intel.linkedin_seniority.lower() != "not publicly available":
             seniority = intel.linkedin_seniority.lower()
         elif lead.persona or lead.last_name: # Handle some titles mistakenly put in last_name

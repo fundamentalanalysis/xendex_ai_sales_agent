@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     unsubscribe_url: str = ""
     
     # Lead Qualification
-    qualification_threshold: float = 0.60  # 60% composite score to qualify
+    qualification_threshold: float = 0.40  # 40% per dimension to qualify
     
     @property
     def cors_origins_list(self) -> List[str]:

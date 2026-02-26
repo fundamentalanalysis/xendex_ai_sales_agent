@@ -245,14 +245,10 @@ class WebScraper:
         # Check if SerpAPI key is configured
         serpapi_key = getattr(settings, 'serpapi_key', None)
         
-        # Fallback to Google Custom Search if SerpAPI not configured
+        # SerpAPI is the only search provider used
         if not serpapi_key:
-            # Try Google Custom Search as fallback
-            if settings.google_api_key and settings.google_search_engine_id:
-                return await self._search_google_custom(query, max_results)
-            
             logger.warning(
-                "Search API not configured - add SERPAPI_KEY to .env (get free key at serpapi.com)"
+                "SERPAPI_KEY not configured - research will be limited"
             )
             return []
         
@@ -269,6 +265,14 @@ class WebScraper:
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.get(api_url, params=params)
                 
+                # Check for rate limiting or account issues (like out of credits)
+                if response.status_code == 429:
+                    logger.warning(
+                        "SerpAPI Account Exhausted - Out of Credits!",
+                        error=response.text[:200]
+                    )
+                    return []
+
                 if response.status_code != 200:
                     logger.warning(
                         "SerpAPI error",
@@ -300,59 +304,4 @@ class WebScraper:
             logger.error("SerpAPI error", query=query[:50], error=str(e))
             return []
     
-    async def _search_google_custom(
-        self, 
-        query: str, 
-        max_results: int = 5
-    ) -> List[Dict[str, str]]:
-        """Fallback: Google Custom Search API (kept for backwards compatibility)."""
-        from app.config import settings
-        
-        try:
-            api_url = "https://www.googleapis.com/customsearch/v1"
-            params = {
-                "key": settings.google_api_key,
-                "cx": settings.google_search_engine_id,
-                "q": query,
-                "num": min(max_results, 10),
-            }
-            
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(api_url, params=params)
-                
-                if response.status_code != 200:
-                    logger.warning(
-                        "Google search API error",
-                        status=response.status_code,
-                        response=response.text[:200]
-                    )
-                    return []
-                
-                data = response.json()
-                
-                results = []
-                for item in data.get("items", []):
-                    result = {
-                        "title": item.get("title", ""),
-                        "url": item.get("link", ""),
-                        "snippet": item.get("snippet", ""),
-                        "date": "",
-                    }
-                    
-                    metatags = item.get("pagemap", {}).get("metatags", [])
-                    if metatags:
-                        for meta in metatags:
-                            date = meta.get("article:published_time") or meta.get("og:updated_time")
-                            if date:
-                                result["date"] = date[:10]
-                                break
-                    
-                    results.append(result)
-                
-                logger.info("Google search completed", query=query[:50], results=len(results))
-                return results
-                
-        except Exception as e:
-            logger.error("Google search error", query=query[:50], error=str(e))
-            return []
 

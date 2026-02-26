@@ -108,28 +108,43 @@ class LeadIntelligenceAgent(BaseAgent):
                             careers_content = content
             
             if not all_content:
-                self.logger.warning("Could not scrape website, using empty safe fallback", domain=domain)
-                fallback_company = domain.split('.')[0].replace('-', ' ').title()
-                return {
-                    "company_overview": f"{fallback_company}. Note: Exact details not publicly available as the website could not be analyzed.",
-                    "industry": "Not publicly available",
-                    "offerings": [],
-                    "pain_indicators": [],
-                    "buying_signals": [],
-                    "tech_stack_hints": [],
-                    "gtm_motion": "Not publicly available",
-                    "company_size_estimate": "Not publicly available",
-                    "growth_stage": "Not publicly available",
+                self.logger.warning("Website scraping failed - shifting to Heuristic LLM Knowledge Fallback", domain=domain)
+                
+                # Zero-Shot research based on Domain Name
+                fallback_analysis = await self.openai_client.chat_json(
+                    prompt=f"""I was unable to scrape the website for {domain}. 
+                    Based on your internal knowledge of this company name and domain, provide a high-confidence business analysis.
+                    
+                    Respond in this exact JSON format:
+                    {{
+                        "company_overview": "Specific explanation of what {domain} does",
+                        "industry": "Primary industry (e.g. Fintech, Cybersecurity, Healthtech)",
+                        "offerings": ["Specific product A", "Specific product B"],
+                        "pain_indicators": ["Specific pain point 1", "Pain point 2", "Pain point 3"],
+                        "buying_signals": ["Specific growth trigger 1", "Specific signal 2"],
+                        "tech_stack_hints": ["Salesforce", "AWS", "Snowflake", "Likely CRM", "Likely Cloud Platform"],
+                        "gtm_motion": "enterprise/smb/self-serve/hybrid",
+                        "company_size_estimate": "startup/small/medium/enterprise",
+                        "growth_stage": "early/growth/mature"
+                    }}
+                    """,
+                    system="You are an expert market researcher. Provide specific, company-aligned intelligence. DO NOT use generic placeholders like 'Likely Product 1'. Use your knowledge of the company or industry to name real products/technologies."
+                )
+                
+                # Merge with metadata
+                fallback_analysis.update({
                     "success": True,
                     "domain": domain,
                     "pages_analyzed": 0,
+                    "is_heuristic": True,
                     "job_signals": {
                         "relevant_roles": [],
                         "hiring_intensity": "low",
                         "tech_focus_areas": []
                     },
                     "analyzed_at": datetime.utcnow().isoformat()
-                }
+                })
+                return fallback_analysis
             
             combined_content = "\n\n".join(all_content)
             

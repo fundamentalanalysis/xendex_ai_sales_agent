@@ -179,3 +179,44 @@ async def recalculate_scores(lead_id: UUID, db: AsyncSession = Depends(get_db)):
             exc_info=True
         )
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+@router.get("/{lead_id}/stored")
+async def get_stored_scores(lead_id: UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Get previously calculated scores from the database without recalculating.
+    """
+    stmt = select(Lead).where(Lead.id == lead_id)
+    result = await db.execute(stmt)
+    lead = result.scalar_one_or_none()
+    
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+        
+    intel_stmt = select(LeadIntelligence).where(LeadIntelligence.lead_id == lead_id)
+    intel_res = await db.execute(intel_stmt)
+    intel = intel_res.scalars().first()
+    
+    # If no stored breakdown exists but scores do, we might need a fallback
+    fit_bd = getattr(intel, 'fit_breakdown', {}) or {}
+    readiness_bd = getattr(intel, 'readiness_breakdown', {}) or {}
+    
+    return {
+        "lead_id": lead_id,
+        "company_name": lead.company_name,
+        "contact_name": f"{lead.first_name} {lead.last_name}",
+        "fit_score": float(lead.fit_score or 0),
+        "readiness_score": float(lead.readiness_score or 0),
+        "intent_score": float(lead.intent_score or 0),
+        "composite_score": float(lead.composite_score or 0),
+        "status": lead.status,
+        "fit_breakdown": fit_bd,
+        "readiness_breakdown": readiness_bd,
+        "intent_breakdown": {
+            "percentage": 0,
+            "components": {},
+            "notes": ["Intent dimension disabled."]
+        },
+        "researched_at": lead.researched_at.isoformat() if lead.researched_at else None,
+        "is_stored": True
+    }

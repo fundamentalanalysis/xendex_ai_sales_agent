@@ -121,7 +121,12 @@ async def run_research_background(str_lead_id: str):
                 intent_inputs = SimpleDataExtractor.extract_intent_inputs(lead, intelligence)
                 
                 engine = MasterScoringEngine(qualification_threshold=settings.qualification_threshold)
-                combined_inputs = {**fit_inputs, **readiness_inputs, **intent_inputs}
+                combined_inputs = {
+                    **fit_inputs, 
+                    **readiness_inputs, 
+                    **intent_inputs, 
+                    "previous_status": lead.status
+                }
                 master_scores = engine.calculate_all_scores(**combined_inputs)
                 
                 lead.fit_score = master_scores.fit_score
@@ -129,6 +134,18 @@ async def run_research_background(str_lead_id: str):
                 lead.intent_score = master_scores.intent_score
                 lead.composite_score = master_scores.composite_score
                 lead.status = master_scores.qualification_status
+
+                # Store Persisted Breakdown for display (to avoid automated recalculation)
+                intelligence.fit_breakdown = {
+                    "percentage": round(master_scores.fit_breakdown.percentage * 100, 1),
+                    "components": master_scores.fit_breakdown.components,
+                    "notes": master_scores.fit_breakdown.notes
+                }
+                intelligence.readiness_breakdown = {
+                    "percentage": round(master_scores.readiness_breakdown.percentage * 100, 1),
+                    "components": master_scores.readiness_breakdown.components,
+                    "notes": master_scores.readiness_breakdown.notes
+                }
             except Exception as score_exc:
                 logger.error("Scoring engine failed during research, falling back...", exc_info=True)
                 lead.status = "not_qualified"

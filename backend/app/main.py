@@ -1,15 +1,16 @@
 import sys
 import asyncio
 
-# CRITICAL: Fix for Playwright/subprocesses on Windows
-# Must be at the very top before any async work or loop creation
 if sys.platform == 'win32':
-    try:
-        # If uvicorn already started the loop, we can't change the policy
-        # But we try anyway for the subprocesses
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    except Exception:
-        pass
+    # This must be done BEFORE the first loop is created
+    # Uvicorn on Windows defaults to SelectorEventLoop which breaks subprocesses (Playwright)
+    # We try to force ProactorEventLoopPolicy
+    policy = asyncio.get_event_loop_policy()
+    if not isinstance(policy, asyncio.WindowsProactorEventLoopPolicy):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        except Exception:
+            pass
 
 import logging
 from datetime import datetime
@@ -31,7 +32,15 @@ logger = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
-    loop_type = type(asyncio.get_running_loop()).__name__
+    loop = asyncio.get_running_loop()
+    loop_type = type(loop).__name__
+    
+    if sys.platform == 'win32' and loop_type != 'ProactorEventLoop':
+        logger.warning(
+            "⚠️  DETECTION: Windows is using SelectorEventLoop instead of ProactorEventLoop!",
+            hint="Subprocesses (like Playwright/LinkedIn scraper) will CRASH. Run uvicorn with --loop asyncio if this continues."
+        )
+        
     logger.info("🚀 Starting AI Sales Agent API", 
                 server_time=datetime.utcnow().isoformat(),
                 event_loop=loop_type)
