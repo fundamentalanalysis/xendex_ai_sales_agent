@@ -32,9 +32,14 @@ class LinkedInBrowserScraper:
         # Load li_at from settings if not provided
         if li_at_cookie is None:
             from app.config import settings
-            self.li_at_cookie = settings.phantombuster_li_at
+            self.li_at_cookie = settings.linkedin_cookie  # uses LINKEDIN_LI_AT or PHANTOMBUSTER_LI_AT
         else:
             self.li_at_cookie = li_at_cookie
+        
+        if self.li_at_cookie:
+            logger.info("LinkedIn cookie loaded", cookie_length=len(self.li_at_cookie), cookie_prefix=self.li_at_cookie[:8])
+        else:
+            logger.warning("No LinkedIn li_at cookie configured - will use public/SerpAPI fallback only")
     
     async def scrape_profile(self, linkedin_url: str) -> Dict[str, Any]:
         """
@@ -64,13 +69,23 @@ class LinkedInBrowserScraper:
     
     async def _scrape_authenticated(self, linkedin_url: str) -> Dict[str, Any]:
         """Scrape with authentication cookies."""
+        # Ensure HTTPS (LinkedIn redirects http to https but cookies need https)
+        linkedin_url = linkedin_url.replace("http://", "https://")
+        
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.headless)
+            browser = await p.chromium.launch(
+                headless=self.headless,
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+            )
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 900},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                viewport={"width": 1440, "height": 900},
                 locale="en-US",
-                timezone_id="America/Los_Angeles",
+                timezone_id="America/New_York",
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
             )
             
             # Inject LinkedIn session cookies
@@ -98,25 +113,42 @@ class LinkedInBrowserScraper:
             page = await context.new_page()
             
             try:
-                # Visit homepage first then profile
-                await page.goto("https://www.linkedin.com/", wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(1)
-                await page.goto(linkedin_url, wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(3)
+                # Go directly to the profile page
+                await page.goto(linkedin_url, wait_until="domcontentloaded", timeout=40000)
+                await asyncio.sleep(4)  # Wait for React to hydrate
                 
-                # Scroll to load all content
+                # Check if we're on a real profile page or still on login wall
+                current_url = page.url
+                page_title = await page.title()
+                logger.info("Page loaded", url=current_url, title=page_title[:100])
+                
+                # Check for auth wall
+                if "authwall" in current_url or "login" in current_url or "signup" in current_url:
+                    logger.warning("Hit LinkedIn auth wall despite cookie - cookie may be expired", url=current_url)
+                    return {"success": False, "error": "Auth wall hit - cookie may be expired"}
+                
+                # Scroll to load lazy content
                 await self._scroll_page(page)
-
+                await asyncio.sleep(2)
                 
-                # Get the full page text for analysis
+                # Get FULL page text (larger for LLM)
                 page_text = await self._get_page_text(page)
+                logger.info("Page text captured", length=len(page_text), url=linkedin_url)
                 
-                # Extract data
+                # Extract structured data using multiple strategies
                 profile = await self._extract_profile_data(page, page_text)
                 experience = await self._extract_experience(page, page_text)
                 education = await self._extract_education(page, page_text)
                 skills = await self._extract_skills(page, page_text)
                 activity = await self._extract_activity(page, linkedin_url)
+                
+                # If selectors failed but we have page_text, mark success anyway
+                # The LLM analysis will extract data from page_text_preview
+                has_any_data = bool(page_text and len(page_text) > 500)
+                
+                if not has_any_data:
+                    logger.warning("No usable page text captured - may need longer wait", url=linkedin_url)
+                    return {"success": False, "error": "No page content captured"}
                 
                 result = {
                     "success": True,
@@ -128,10 +160,18 @@ class LinkedInBrowserScraper:
                     "skills": skills,
                     "activity": activity,
                     "linkedin_url": linkedin_url,
-                    "page_text_preview": page_text[:2000] if page_text else "",
+                    # Pass full text for LLM (increased from 2000 to 8000)
+                    "page_text_preview": page_text[:8000] if page_text else "",
                 }
                 
-                logger.info("Authenticated LinkedIn scrape complete", url=linkedin_url)
+                logger.info(
+                    "Authenticated LinkedIn scrape complete",
+                    url=linkedin_url,
+                    has_name=bool(profile.get("name")),
+                    experience_count=len(experience),
+                    skills_count=len(skills),
+                    page_text_length=len(page_text),
+                )
                 return result
                 
             except Exception as e:
@@ -139,6 +179,7 @@ class LinkedInBrowserScraper:
                 return {"success": False, "error": str(e)}
             finally:
                 await browser.close()
+
     
     async def _scrape_public(self, linkedin_url: str) -> Dict[str, Any]:
         """Scrape public LinkedIn profile without authentication."""

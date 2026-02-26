@@ -2,7 +2,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { leadsApi, Lead, draftsApi, BulkImportResult, debugApi, emailsApi } from '../lib/api'
+import { leadsApi, Lead, draftsApi, debugApi, BulkImportResult, emailsApi } from '../lib/api'
+import LeadScoresDisplay from '../components/LeadScoresDisplay'
 import {
     Search,
     Plus,
@@ -32,14 +33,22 @@ import './Leads.css'
 
 const STATUS_COLORS: Record<string, string> = {
     new: 'neutral',
+    not_started: 'neutral',
     researching: 'info',
     qualified: 'success',
-    sequencing: 'info',
+    not_qualified: 'error',
+    started: 'info',
     inprogress: 'info',
     contacted: 'warning',
+    mail_sent: 'warning',
     replied: 'success',
     converted: 'success',
+    completed: 'success',
     disqualified: 'error',
+}
+
+const formatStatus = (status: string) => {
+    return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
 }
 
 export default function Leads() {
@@ -55,6 +64,10 @@ export default function Leads() {
     const { data, isLoading } = useQuery({
         queryKey: ['leads', page, search, statusFilter],
         queryFn: () => leadsApi.list({ page, search: search || undefined, status: statusFilter || undefined }),
+        refetchInterval: (query) => {
+            const items = query.state.data?.items || []
+            return items.some((l: any) => l.status === 'researching') ? 3000 : false
+        },
     })
 
     const leads: Lead[] = data?.items || []
@@ -148,7 +161,9 @@ export default function Leads() {
                     <option value="new">New</option>
                     <option value="researching">Researching</option>
                     <option value="qualified">Qualified</option>
-                    <option value="sequencing">In Sequence</option>
+                    <option value="not_qualified">Not Qualified</option>
+                    <option value="inprogress">In Outreach</option>
+                    <option value="completed">Completed</option>
                     <option value="sequencing">In Sequence</option>
                     <option value="contacted">Contacted (Exact)</option>
                     <option value="all_contacted">All Contacted</option>
@@ -402,10 +417,18 @@ function LeadRow({
 
     const generateDraftMutation = useMutation({
         mutationFn: (leadId: string) => draftsApi.generate({ lead_ids: [leadId] }),
-        onSuccess: (_, leadId) => {
+        onSuccess: (data: any, leadId: string) => {
+            if (data && data.failed > 0 && data.generated === 0) {
+                alert(`Failed to generate draft. Error: ${data.errors?.[0]?.error || 'Unknown error. Check backend logs for more details.'}`);
+            } else {
+                alert('Draft generated successfully for this lead!');
+            }
             debugApi.terminalLog(`Draft generation initiated for lead ${leadId}`)
             queryClient.invalidateQueries({ queryKey: ['leads'] })
         },
+        onError: (error: any) => {
+            alert(`Failed to generate draft: ${error?.message || 'Unknown error'}`);
+        }
     })
 
     const deleteMutation = useMutation({
@@ -418,6 +441,7 @@ function LeadRow({
 
     const formatScore = (score?: number) => {
         if (score === undefined || score === null) return '—'
+        if (score === 0) return '—'  // 0 means no useful data was gathered
         return `${Math.round(score * 100)}%`
     }
 
@@ -438,7 +462,9 @@ function LeadRow({
                 </div>
             </td>
             <td>
-                <span className={`badge badge-${STATUS_COLORS[lead.status] || 'neutral'}`}>{lead.status}</span>
+                <span className={`badge badge-${STATUS_COLORS[lead.status] || 'neutral'}`}>
+                    {formatStatus(lead.status)} {lead.status === 'researching' && '(est. 1-2 min)'}
+                </span>
                 {lead.has_replied && (
                     <span className="badge badge-success" title="Lead has replied">
                         ✓ Replied
@@ -461,11 +487,16 @@ function LeadRow({
             <td className="text-secondary">{lead.industry || '—'}</td>
             <td>
                 <div className="actions-cell">
-                    <button className="btn btn-ghost btn-sm" onClick={() => researchMutation.mutate(lead.id)} disabled={researchMutation.isPending} title="Run Research">
-                        {researchMutation.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Zap size={16} />}
+                    <button className="btn btn-ghost btn-sm" onClick={() => researchMutation.mutate(lead.id)} disabled={researchMutation.isPending || lead.status === 'researching'} title="Run Research">
+                        {researchMutation.isPending || lead.status === 'researching' ? <RefreshCw size={16} className="animate-spin" /> : <Zap size={16} />}
                     </button>
                     {lead.researched_at && (
                         <button className="btn btn-ghost btn-sm" onClick={() => onViewResearch(lead.id)} title="View Research">
+                            <Eye size={16} />
+                        </button>
+                    )}
+                    {!lead.researched_at && (lead.status === 'not_qualified' || lead.status === 'qualified') && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => onViewResearch(lead.id)} title="View Research (limited data)" style={{ opacity: 0.5 }}>
                             <Eye size={16} />
                         </button>
                     )}
@@ -497,6 +528,7 @@ function ResearchPanel({ leadId, onClose }: { leadId: string; onClose: () => voi
 
     const formatScore = (score?: number) => {
         if (score === undefined || score === null) return '—'
+        if (score === 0) return '—'  // 0 means agents returned no useful data
         return `${Math.round(score * 100)}%`
     }
 
@@ -546,6 +578,14 @@ function ResearchPanel({ leadId, onClose }: { leadId: string; onClose: () => voi
 
     if (!data) return null;
 
+    // Show a banner if research was never run or returned no data
+    const hasNoData = !data.researched || (
+        !data.scores?.fit_score &&
+        !data.scores?.composite_score &&
+        !data.lead_analysis?.offerings?.length &&
+        !data.lead_analysis?.pain_indicators?.length
+    );
+
     const analysis = data.lead_analysis || {};
     const linkedin = data.linkedin || {};
     const insights = data.insights || {};
@@ -559,19 +599,27 @@ function ResearchPanel({ leadId, onClose }: { leadId: string; onClose: () => voi
                 </div>
 
                 <div className="research-content">
+                    {hasNoData && (
+                        <div className="research-section" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '10px', padding: '16px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{ fontSize: '1.4rem' }}>⚠️</span>
+                                <div>
+                                    <strong style={{ color: '#f59e0b' }}>Research data is incomplete</strong>
+                                    <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                                        The research pipeline ran but couldn't gather enough data (API limits, website blocked, or LinkedIn scraping failed).
+                                        Click the <strong>⚡ button</strong> on the leads table to re-run research.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <div className="research-header">
                         <div><h3>{data.lead?.company_name}</h3><span className="text-secondary">{data.lead?.company_domain}</span></div>
                         <div className="research-meta"><span>Researched: {formatDate(data.researched_at)}</span></div>
                     </div>
 
                     <div className="research-section">
-                        <h4>Scores</h4>
-                        <div className="scores-grid">
-                            <div className="score-card"><span className="score-label">Fit</span><span>{formatScore(data.scores?.fit_score)}</span></div>
-                            <div className="score-card"><span className="score-label">Readiness</span><span>{formatScore(data.scores?.readiness_score)}</span></div>
-                            <div className="score-card"><span className="score-label">Intent</span><span>{formatScore(data.scores?.intent_score)}</span></div>
-                            <div className="score-card highlight"><span className="score-label">Composite</span><span>{formatScore(data.scores?.composite_score)}</span></div>
-                        </div>
+                        <LeadScoresDisplay leadId={leadId} />
                     </div>
 
                     {/* Lead Company Analysis */}
@@ -607,54 +655,7 @@ function ResearchPanel({ leadId, onClose }: { leadId: string; onClose: () => voi
                         </div>
                     </div>
 
-                    {/* LinkedIn Intelligence */}
-                    <div className="research-section">
-                        <h4><Linkedin size={16} /> LinkedIn Intelligence</h4>
-                        <div className="linkedin-grid">
-                            <div className="info-row">
-                                <span className="label">Seniority:</span>
-                                <span className={`badge badge-${linkedin.seniority === 'executive' || linkedin.seniority === 'director' ? 'warning' : 'info'}`}>
-                                    {linkedin.seniority ? linkedin.seniority.toLowerCase() : 'unknown'}
-                                </span>
-                            </div>
-                            <div className="info-row">
-                                <span className="label">Decision Maker:</span>
-                                <span className={`badge badge-${linkedin.decision_power ? 'success' : 'neutral'}`} style={!linkedin.decision_power ? { color: '#666', background: '#e5e7eb' } : {}}>
-                                    {linkedin.decision_power ? 'Yes' : '× No'}
-                                </span>
-                            </div>
-                            <div className="info-row">
-                                <span className="label">Budget Authority:</span>
-                                <span className={`badge badge-${linkedin.budget_authority && linkedin.budget_authority !== 'none' ? 'success' : 'warning'}`} style={!linkedin.budget_authority || linkedin.budget_authority === 'none' ? { color: '#b45309', background: '#fef3c7' } : {}}>
-                                    {linkedin.budget_authority || 'none'}
-                                </span>
-                            </div>
-                            <div className="info-row">
-                                <span className="label">LinkedIn Lead Score:</span>
-                                <span className="badge badge-neutral" style={{ background: '#f3f4f6', color: '#374151' }}>
-                                    {linkedin.lead_score !== undefined ? `${linkedin.lead_score}/100` : '0/100'}
-                                </span>
-                            </div>
 
-                            {linkedin.cold_email_hooks && linkedin.cold_email_hooks.length > 0 && (
-                                <div className="mt-3">
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: '#ec4899', marginBottom: '8px' }}>
-                                        <Target size={16} /> Cold Email Hooks:
-                                    </span>
-                                    <ul className="bullet-list">
-                                        {renderListItems(linkedin.cold_email_hooks)}
-                                    </ul>
-                                </div>
-                            )}
-
-                            {linkedin.opening_line && (
-                                <div className="suggestion-box mt-3">
-                                    <span className="label block mb-1">Suggested Opening Line:</span>
-                                    <p className="italic text-secondary">"{linkedin.opening_line}"</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
 
                     {/* AI Insights */}
                     <div className="research-section">

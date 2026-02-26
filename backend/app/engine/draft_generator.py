@@ -116,19 +116,27 @@ Best,
 # Guardrails for email generation
 GUARDRAILS = """
 CRITICAL RULES (NEVER VIOLATE):
-1. DO NOT make claims that cannot be verified from the provided evidence
-2. DO NOT invent case studies, metrics, or company names
-3. DO NOT assume the lead has a problem they haven't indicated
-4. DO NOT use manipulative or pushy language
-5. DO NOT exceed 150 words for the body
-6. DO NOT use spam trigger words: "free", "guarantee", "act now", "limited time"
-7. ALWAYS include an easy opt-out option if requested
-8. ALWAYS be truthful and professional
+1. Base emails ONLY on actual facts from provided intelligence. No assumptions.
+2. DO NOT invent case studies, metrics, or company names.
+3. DO NOT assume problems the lead hasn't indicated. Avoid "I work with teams navigating similar expansions" unless it's a verified fact.
+4. DO NOT use pushy language like "Would you be open to a quick chat?". Instead use highly consultative, polite, and exploratory CTAs such as "I was wondering if it might be useful to connect for a brief 15-minute conversation next week to exchange perspectives... I’d be happy to work around your availability."
+5. DO NOT apologize for outreach or use negative framing (e.g. NEVER say "I apologize for the interruption" or "If you are too busy").
+6. Keep total length under 180 words for the body.
+7. ALWAYS provide a polite, low-pressure soft out like "If now isn’t a good time, no worries at all—please feel free to reach out if it makes sense in the future."
+8. ALWAYS be truthful, structured, and use a consultative peer-to-peer tone.
+
+PROFESSIONAL STRUCTURE EXPECTATION:
+- GREETING: Professional opening.
+- CONTEXT: What we observed from research, phrased conversationally (e.g., "I recently came across... It was interesting to see how this aligns with...").
+- INSIGHT: Share a generalized industry observation (e.g., "From conversations with other teams... I’ve noticed a growing focus on...").
+- CTA: Polite, exploratory invitation to connect to exchange perspectives (e.g. "I was wondering if it might be useful to connect...").
+- SOFT_OUT: Respectful acknowledgment if not interested (NO APOLOGIES).
+- SOFT_OUT: Respectful acknowledgment if not interested (NO APOLOGIES).
+- CLOSING: Professional signature.
 
 PERSONALIZATION RULES:
-- Light: Use only role + industry + company name
-- Medium: Add ONE specific trigger or insight
-- Deep: Add trigger + LinkedIn insight + specific pain hypothesis
+- Lead with context observed from data, not assumptions.
+- Provide real problem statements based on triggers.
 """
 
 
@@ -295,10 +303,11 @@ The goal is to gently bring the conversation back to the top of their inbox by a
 - Trigger: {context.get('triggers', [])}
 
 ## YOUR TASK
-Create a SHORT follow-up email (Touch 2) that:
-1. Is significantly shorter than the first email (aim for < 80 words)
-2. Does NOT just say "did you see my last email?"
-3. PIVOTS to a new specific benefit or proof point
+Create a COMPLETELY NEW SHORT follow-up email (Touch 2) that:
+1. Is completely freshly written. Do NOT reuse previous wording. Change angle, tone, structure, and phrasing.
+2. Is significantly shorter than the first email (aim for < 80 words)
+3. Does NOT just say "did you see my last email?"
+4. PIVOTS to a new specific benefit or proof point
 4. Respects their time
 5. Ends with a simpler, lower-friction call to action (e.g. "Is this relevant?" or "Any interest?")
 
@@ -347,44 +356,43 @@ Make it feel like a human checking in, not a robot nagging."""
 {context['template']}
 
 ## YOUR TASK
-Create an email that:
-1. Opens with a personalized hook based on REAL data above (trigger, topic, or role-specific insight)
-2. Shows you understand their world without making assumptions
-3. Bridges to value with ONE clear benefit (not a feature dump)
-4. Ends with a low-pressure, specific CTA
-5. Feels like it was written by a human, not a template
+Create a COMPLETELY NEW cold email that strictly follows the PROFESSIONAL STRUCTURE defined in the Guardrails.
+Do not reuse previous wording. Change angle, tone, structure, and subject line to ensure this feels like a fresh variation.
+1. Opens with a personalized context hook based on REAL data above. Use phrases like "I recently came across... It was interesting to see how this aligns with...".
+2. Share a peer-to-peer industry observation (e.g., "From conversations with other teams... I’ve noticed a growing focus on...").
+3. Uses a highly consultative, polite CTA (e.g., "I was wondering if it might be useful to connect for a brief 15-minute conversation next week to exchange perspectives... I’d be happy to work around your availability.").
+4. Includes a low-pressure Soft Out (e.g., "If now isn’t a good time, no worries at all—please feel free to reach out if it makes sense in the future.").
+5. Feels like it was written by a polite, professional, consultative human exchanging perspectives.
+6. Uses proper formatting with explicit section components in mind and clear \n\n breaks between paragraphs.
 
 ## OUTPUT FORMAT (JSON):
 {{
     "subject_options": [
-        "Subject 1 - personalized, under 50 chars, creates curiosity",
-        "Subject 2 - different angle, mentions company or role",
-        "Subject 3 - question-based or trigger-based"
+        "Subject 1 - completely fresh personalized subject, under 50 chars",
+        "Subject 2 - different angle, entirely new wording",
+        "Subject 3 - new question-based or trigger-based subject"
     ],
-    "body": "The full email body - under 120 words, conversational, personalized, ends with clear CTA and signature placeholder",
+    "body": "The completely new email body formatted with \\n\\n for paragraph breaks - highly consultative, exploratory, ends with a polite 'I was wondering if it might be useful' CTA and a gentle soft exit.",
     "personalization_elements": ["List specific elements you personalized based on the data"],
-    "cta_used": "The exact CTA phrase you used"
+    "cta_used": "The exact time-based CTA phrase you used"
 }}
 
 IMPORTANT: Each subject line should be DIFFERENT in approach. Don't just rephrase the same thing.
-- One could reference a trigger/news
-- One could ask a question
-- One could mention a benefit or insight
-
-Make the email feel like you actually researched this person. Use their name, role, company context naturally."""
+Make the email feel like you actually researched this person. Use genuine references, no marketing fluff."""
         
         system = """You are an elite B2B sales copywriter known for emails that get responses. 
 Your emails are:
 - Personalized (not generic "I came across your company")
 - Concise (respect the reader's time)
 - Value-focused (lead with insight, not pitch)
-- Human (conversational, not corporate jargon)
-- Action-oriented (clear, low-pressure CTA)
+- Professional (never apologetic, always confident)
+- Time-conscious (respects their schedule but assumes value)
+- Action-oriented (clear, professional time-based CTA)
 
 You never make unverified claims or use pushy language. You use the available intelligence to create genuine connections."""
         
         try:
-            result = await self.openai.chat_json(prompt=prompt, system=system)
+            result = await self.openai.chat_json(prompt=prompt, system=system, temperature=0.8)
             return result
         except Exception as e:
             logger.error("LLM generation failed", error=str(e))
@@ -545,10 +553,8 @@ You never make unverified claims or use pushy language. You use the available in
                 draft["body"] = ". ".join(truncated) + "."
                 draft["was_truncated"] = True
         
-        # Convert body to HTML for Quill editor -> DISABLED per user request for "clean template"
-        # draft["body"] = self._convert_to_html(draft.get("body", ""))
-        # Just ensure string
-        draft["body"] = str(draft.get("body", ""))
+        # Convert body to HTML for Quill editor so it maintains proper structure and spacing
+        draft["body"] = self._convert_to_html(str(draft.get("body", "")))
         
         draft["word_count"] = len(draft.get("body", "").split())
         

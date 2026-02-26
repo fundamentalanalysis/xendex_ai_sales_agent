@@ -111,7 +111,9 @@ class RiskFilterAgent(BaseAgent):
             for signal in NEGATIVE_SIGNALS:
                 if signal["pattern"] in summary or signal["pattern"] in trigger_type:
                     # Check recency - more recent = higher risk
-                    recency_days = trigger.get("recency_days", 999)
+                    recency_days = trigger.get("recency_days")
+                    if recency_days is None:
+                        recency_days = 999
                     
                     if recency_days <= 30:
                         risk_boost = "very recent"

@@ -9,11 +9,17 @@ from app.models.base import Base
 
 logger = structlog.get_logger()
 
-# Create async engine
+# Create async engine with restricted pool for cloud limits
+# Aiven free tier has very low connection limits - keep pool minimal
 engine = create_async_engine(
     settings.get_database_url,
     echo=settings.debug,
     future=True,
+    pool_size=1,          # Minimal pool size for Aiven (limit ~5 connections total)
+    max_overflow=4,       # Allow burst connections up to 5 total
+    pool_recycle=300,     # Recycle frequently
+    pool_pre_ping=True,
+    pool_timeout=30,
 )
 
 # Create session factory

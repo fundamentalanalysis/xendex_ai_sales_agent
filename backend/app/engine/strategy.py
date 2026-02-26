@@ -146,7 +146,7 @@ class StrategyEngine:
         if triggers:
             strong_triggers = [
                 t for t in triggers 
-                if t.get("confidence", 0) > 0.7 and t.get("recency_days", 999) < 60
+                if (t.get("confidence") or 0) > 0.7 and (t.get("recency_days") or 999) < 60
             ]
             if strong_triggers:
                 return (
@@ -356,7 +356,7 @@ class StrategyEngine:
                 # Best trigger
                 best_trigger = max(
                     triggers,
-                    key=lambda t: (t.get("confidence", 0), -t.get("recency_days", 999))
+                    key=lambda t: (t.get("confidence") or 0, -(t.get("recency_days") or 999))
                 )
                 evidence["triggers"].append(best_trigger)
             

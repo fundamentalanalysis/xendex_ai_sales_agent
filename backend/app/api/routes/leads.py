@@ -9,6 +9,8 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import structlog
+
 from app.dependencies import get_db
 from app.models.lead import Lead, LeadIntelligence
 from app.models.draft import Draft
@@ -24,7 +26,9 @@ from app.schemas.lead import (
     BulkLeadImport,
     BulkImportResult,
 )
+from fastapi import BackgroundTasks
 
+logger = structlog.get_logger()
 router = APIRouter()
 
 
@@ -267,18 +271,30 @@ async def list_leads(
     # Apply filters
     if status:
         if status == "inprogress":
-            stmt = stmt.where(Lead.status.in_(["sequencing", "contacted"]))
-            count_stmt = count_stmt.where(Lead.status.in_(["sequencing", "contacted"]))
-        elif status == "not_started":
-            stmt = stmt.where(Lead.status.in_(["new", "qualified", "researching"]))
-            count_stmt = count_stmt.where(Lead.status.in_(["new", "qualified", "researching"]))
+            # Outreach phase
+            inprogress_statuses = ["sequencing", "started", "inprogress", "contacted", "mail_sent"]
+            stmt = stmt.where(Lead.status.in_(inprogress_statuses))
+            count_stmt = count_stmt.where(Lead.status.in_(inprogress_statuses))
+        elif status == "qualified":
+            # Qualified but outreach not yet started
+            stmt = stmt.where(Lead.status == "qualified")
+            count_stmt = count_stmt.where(Lead.status == "qualified")
         elif status == "completed":
-            stmt = stmt.where(Lead.status.in_(["replied", "converted", "disqualified", "completed"]))
-            count_stmt = count_stmt.where(Lead.status.in_(["replied", "converted", "disqualified", "completed"]))
+            # Finished phase
+            completed_statuses = ["replied", "converted", "disqualified", "completed"]
+            stmt = stmt.where(Lead.status.in_(completed_statuses))
+            count_stmt = count_stmt.where(Lead.status.in_(completed_statuses))
         elif status == "all_contacted":
-            stmt = stmt.where(Lead.status.in_(["contacted", "sequencing", "replied", "converted", "completed"]))
-            count_stmt = count_stmt.where(Lead.status.in_(["contacted", "sequencing", "replied", "converted", "completed"]))
+            # Everything that has reached the contact stage
+            contacted_statuses = ["contacted", "mail_sent", "replied", "converted", "completed"]
+            stmt = stmt.where(Lead.status.in_(contacted_statuses))
+            count_stmt = count_stmt.where(Lead.status.in_(contacted_statuses))
+        elif status == "new":
+            # New leads, those never started, or those currently being researched
+            stmt = stmt.where(Lead.status.in_(["new", "not_started", "researching"]))
+            count_stmt = count_stmt.where(Lead.status.in_(["new", "not_started", "researching"]))
         else:
+            # Exact match for researching, qualified, etc.
             stmt = stmt.where(Lead.status == status)
             count_stmt = count_stmt.where(Lead.status == status)
     
@@ -302,30 +318,34 @@ async def list_leads(
     
     # Get total count
     total_result = await db.execute(count_stmt)
-    total = total_result.scalar()
+    total = total_result.scalar() or 0
     
     # Apply pagination
     offset = (page - 1) * page_size
     stmt = stmt.offset(offset).limit(page_size)
     stmt = stmt.order_by(Lead.composite_score.desc().nullslast(), Lead.created_at.desc())
     
+    # Efficiently check has_replied in a single subquery or post-fetch
     result = await db.execute(stmt)
     leads = result.scalars().all()
     
-    # Add has_replied flag by checking EmailEvents
-    for lead in leads:
-        reply_stmt = select(func.count(EmailEvent.id)).where(
-            (EmailEvent.lead_id == lead.id) & (EmailEvent.event_type == "replied")
-        )
-        reply_result = await db.execute(reply_stmt)
-        lead.has_replied = reply_result.scalar() > 0
+    if leads:
+        lead_ids = [l.id for l in leads]
+        replied_stmt = select(EmailEvent.lead_id).where(
+            (EmailEvent.lead_id.in_(lead_ids)) & (EmailEvent.event_type == "replied")
+        ).group_by(EmailEvent.lead_id)
+        replied_result = await db.execute(replied_stmt)
+        replied_ids = set(replied_result.scalars().all())
+        
+        for lead in leads:
+            lead.has_replied = lead.id in replied_ids
     
     return LeadListResponse(
         items=leads,
         total=total,
         page=page,
         page_size=page_size,
-        pages=(total + page_size - 1) // page_size,
+        pages=(total + page_size - 1) // page_size if page_size > 0 else 0,
     )
 
 
@@ -514,6 +534,7 @@ async def delete_lead(
 @router.post("/{lead_id}/research", status_code=202)
 async def trigger_research(
     lead_id: UUID,
+    background_tasks: BackgroundTasks,
     force_refresh: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
@@ -525,28 +546,41 @@ async def trigger_research(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     
-    # Check if already researched recently
+    # Check if already researched recently — but only skip if research was successful (non-zero score)
+    from datetime import datetime, timedelta
     if lead.researched_at and not force_refresh:
-        from datetime import datetime, timedelta
-        if lead.researched_at > datetime.utcnow() - timedelta(days=30):
+        has_scores = lead.composite_score is not None and float(lead.composite_score) > 0
+        if has_scores and lead.researched_at > datetime.utcnow() - timedelta(days=30):
             return {
                 "status": "skipped",
-                "reason": "Recently researched",
+                "reason": "Recently researched with valid scores",
                 "researched_at": lead.researched_at.isoformat(),
+                "composite_score": float(lead.composite_score),
             }
     
-    # Update status
-    lead.status = "researching"
-    await db.flush()
-    
-    # Trigger Celery task for async research
-    from app.workers.research_tasks import run_research_pipeline
-    print(f"DEBUG: Triggering Celery task for lead_id: {lead_id}")
-    job_id = run_research_pipeline.delay(str(lead_id))
-    print(f"DEBUG: Task queued with job_id: {job_id}")
-    
-    return {
-        "status": "queued",
-        "lead_id": str(lead_id),
-        "job_id": str(job_id),
-    }
+    # Update status to researching immediately
+    try:
+        old_status = lead.status
+        lead.status = "researching"
+        # We use commit() here to ensure the state is saved before the background task or frontend poll hits
+        await db.commit()
+        await db.refresh(lead)
+        
+        logger.info("Lead status updated to researching", lead_id=str(lead_id), previous_status=old_status)
+        
+        # Trigger Background Task for async research (Bypassing Celery to avoid Redis connection limits)
+        from app.services.research import run_research_background
+        background_tasks.add_task(run_research_background, str(lead_id))
+        logger.info("Research background task queued", lead_id=str(lead_id))
+        
+        return {
+            "status": "queued",
+            "lead_id": str(lead_id),
+            "job_id": str(lead_id),
+            "current_status": lead.status,
+        }
+    except Exception as e:
+        logger.error("Failed to trigger research", error=str(e), lead_id=str(lead_id))
+        # Rollback if the status update failed
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error while starting research: {str(e)}")

@@ -281,7 +281,7 @@ async def add_leads_to_sequence(
         db.add(sequence_lead)
         
         # Status logic: New workflow
-        if lead.status == "not_started":
+        if lead.status == "qualified":
             # Lead added to sequence but hasn't sent Touch 1 yet
             # Orchestrator will handle creating the Touch 1 draft
             pass
@@ -347,7 +347,7 @@ async def start_sequence(
                     countdown=countdown
                 )
             else:
-                lead.status = "sequencing" # For not_started leads
+                lead.status = "sequencing" # For qualified leads
     
     await db.commit()
     print(f"[DEBUG] >>> Sequence {sequence_id} started. Triggering orchestrator...")

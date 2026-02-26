@@ -110,9 +110,9 @@ async def generate_drafts(
                 continue
             
             if not lead.intelligence:
-                errors.append({"lead_id": str(lead_id), "error": "Lead not researched"})
-                failed += 1
-                continue
+                intel = None
+            else:
+                intel = lead.intelligence
             
             # Build lead data
             lead_data = {
@@ -121,23 +121,36 @@ async def generate_drafts(
                 "company_name": lead.company_name,
                 "email": lead.email,
                 "persona": lead.persona,
-                "personalization_mode": request.personalization_mode or lead.personalization_mode,
+                "personalization_mode": request.personalization_mode or getattr(lead, 'personalization_mode', 'medium'),
             }
             
             # Build intelligence dict
-            intel = lead.intelligence
-            intelligence = {
-                "industry": intel.lead_offerings[0] if intel.lead_offerings else "",
-                "pain_indicators": intel.lead_pain_indicators or [],
-                "buying_signals": intel.lead_buying_signals or [],
-                "triggers": intel.triggers or [],
-                "linkedin_data": {
-                    "role": intel.linkedin_role,
-                    "seniority": intel.linkedin_seniority,
-                    "topics_30d": intel.linkedin_topics_30d or [],
-                    "likely_initiatives": intel.linkedin_likely_initiatives or [],
-                },
-            }
+            if intel:
+                intelligence = {
+                    "industry": intel.lead_offerings[0] if getattr(intel, 'lead_offerings', None) else "",
+                    "pain_indicators": intel.lead_pain_indicators or [],
+                    "buying_signals": intel.lead_buying_signals or [],
+                    "triggers": intel.triggers or [],
+                    "linkedin_data": {
+                        "role": intel.linkedin_role,
+                        "seniority": intel.linkedin_seniority,
+                        "topics_30d": intel.linkedin_topics_30d or [],
+                        "likely_initiatives": intel.linkedin_likely_initiatives or [],
+                    },
+                }
+            else:
+                intelligence = {
+                    "industry": lead.industry or "",
+                    "pain_indicators": [],
+                    "buying_signals": [],
+                    "triggers": [],
+                    "linkedin_data": {
+                        "role": lead.persona,
+                        "seniority": None,
+                        "topics_30d": [],
+                        "likely_initiatives": [],
+                    },
+                }
             
             # Determine strategy
             strategy = strategy_engine.determine_strategy(
@@ -391,30 +404,52 @@ async def regenerate_draft(
     
     # Modify strategy based on override
     existing_strategy = draft.strategy or {}
-    if request.strategy_override:
-        if request.strategy_override == "different_angle":
-            # Pick a different angle
-            angles = ["trigger-led", "problem-hypothesis", "case-study", "value-insight"]
-            current = existing_strategy.get("angle", "")
-            for angle in angles:
-                if angle != current:
-                    existing_strategy["angle"] = angle
-                    break
-        elif request.strategy_override == "softer_cta":
-            existing_strategy["cta"] = "reply"
-        elif request.strategy_override == "more_casual":
-            existing_strategy["tone"] = "casual"
-        elif request.strategy_override == "more_formal":
-            existing_strategy["tone"] = "professional"
+    
+    # If no override provided, default to a different angle to ensure the content changes
+    override = request.strategy_override or "different_angle"
+    
+    if override == "different_angle":
+        import random
+        # Pick a different angle
+        angles = ["trigger-led", "problem-hypothesis", "case-study", "value-insight"]
+        current = existing_strategy.get("angle", "")
+        available_angles = [a for a in angles if a != current]
+        if available_angles:
+            existing_strategy["angle"] = random.choice(available_angles)
+    elif override == "softer_cta":
+        existing_strategy["cta"] = "reply"
+    elif override == "more_casual":
+        existing_strategy["tone"] = "casual"
+    elif override == "more_formal":
+        existing_strategy["tone"] = "professional"
     
     intel = lead.intelligence
-    intelligence = {
-        "triggers": intel.triggers or [] if intel else [],
-        "linkedin_data": {
-            "role": intel.linkedin_role if intel else None,
-            "topics_30d": intel.linkedin_topics_30d or [] if intel else [],
-        } if intel else {},
-    }
+    if intel:
+        intelligence = {
+            "industry": intel.lead_offerings[0] if getattr(intel, 'lead_offerings', None) else "",
+            "pain_indicators": intel.lead_pain_indicators or [],
+            "buying_signals": intel.lead_buying_signals or [],
+            "triggers": intel.triggers or [],
+            "linkedin_data": {
+                "role": intel.linkedin_role,
+                "seniority": intel.linkedin_seniority,
+                "topics_30d": intel.linkedin_topics_30d or [],
+                "likely_initiatives": intel.linkedin_likely_initiatives or [],
+            },
+        }
+    else:
+        intelligence = {
+            "industry": lead.industry or "",
+            "pain_indicators": [],
+            "buying_signals": [],
+            "triggers": [],
+            "linkedin_data": {
+                "role": lead.persona,
+                "seniority": None,
+                "topics_30d": [],
+                "likely_initiatives": [],
+            },
+        }
     
     new_draft = await generator.generate_draft(
         lead_data=lead_data,

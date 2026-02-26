@@ -72,14 +72,18 @@ class Skills(BaseModel):
 
 class LeadScore(BaseModel):
     """Lead scoring with confidence."""
-    score: int = Field(default=0, ge=0, le=100)
+    score: int = Field(default=0)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     reasoning: Optional[str] = None
     
-    @field_validator("score")
+    @field_validator("score", mode="before")
     @classmethod
-    def clamp_score(cls, v: int) -> int:
-        return max(0, min(100, v))
+    def clamp_score(cls, v: Any) -> int:
+        try:
+            val = int(v)
+            return max(0, min(100, val))
+        except (ValueError, TypeError):
+            return 0
 
 
 class EmailAngle(BaseModel):

@@ -113,6 +113,7 @@ class LeadIntelligence(Base, UUIDMixin):
     
     # Your company analysis
     your_services: Mapped[Optional[dict]] = mapped_column(JSONB)  # [{name, description, icp_fit}]
+    your_industries: Mapped[Optional[dict]] = mapped_column(JSONB) # ["Tech", "Finance"]
     your_proof_points: Mapped[Optional[dict]] = mapped_column(JSONB)  # [{case_study, outcome, industry}]
     your_positioning: Mapped[Optional[str]] = mapped_column(Text)
     
@@ -143,6 +144,11 @@ class LeadIntelligence(Base, UUIDMixin):
     # Computed insights
     pain_hypotheses: Mapped[Optional[dict]] = mapped_column(JSONB)  # [{hypothesis, confidence, evidence}]
     best_angle: Mapped[Optional[str]] = mapped_column(String(100))
+    
+    # Metadata extracted from website (for scoring engine)
+    company_size: Mapped[Optional[str]] = mapped_column(String(50))  # startup, small, medium, enterprise
+    industry: Mapped[Optional[str]] = mapped_column(String(100))
+    gtm_motion: Mapped[Optional[str]] = mapped_column(String(50))    # enterprise, smb, self-serve, hybrid
     
     # Freshness
     researched_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)

@@ -7,8 +7,11 @@ class DebugLogRequest(BaseModel):
     message: str
     level: str = "info"
 
+import structlog
+logger = structlog.get_logger()
+
 @router.post("/log")
 async def log_from_frontend(request: DebugLogRequest):
     """Log a message from the frontend to the backend terminal."""
-    print(f"\n[FRONTEND LOG] [{request.level.upper()}] {request.message}")
+    logger.info("Frontend Log", level=request.level.upper(), message=request.message)
     return {"status": "logged"}

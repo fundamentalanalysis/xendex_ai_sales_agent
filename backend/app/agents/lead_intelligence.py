@@ -6,28 +6,31 @@ from app.agents.base import BaseAgent, AgentResult
 from app.integrations.scraper import WebScraper
 
 
-LEAD_ANALYSIS_PROMPT = """Analyze this company website content and extract intelligence for sales outreach:
+LEAD_ANALYSIS_PROMPT = """You are generating a structured B2B research report.
 
-1. **Company Overview**: What does this company do?
-2. **Offerings**: Their main products/services
-3. **Pain Indicators**: Signs they might need help (outdated tech mentions, growth challenges, etc.)
-4. **Buying Signals**: Indicators they're actively looking (job postings, expansion news, etc.)
-5. **Tech Stack Hints**: Any technology mentions
-6. **GTM Motion**: How do they sell? (Enterprise, SMB, self-serve, etc.)
+Company Name: {domain}
+Website: {content_url_hint}
 
-Website Content:
+IMPORTANT:
+- Use only information relevant to this exact company and website.
+- Do NOT mix with companies of similar names.
+- If unsure, do NOT invent data.
+- Do NOT fabricate funding rounds or acquisitions.
+- If data is unavailable, write "Not publicly available".
+
+Generate structured report in this format based on the following website content:
 {content}
 
-Respond in this JSON format:
+Respond in this exact JSON format:
 {{
-    "company_overview": "Brief description of what they do",
+    "company_overview": "Brief summary of what they do",
     "industry": "Primary industry",
-    "offerings": ["Product/Service 1", "Product/Service 2"],
+    "offerings": ["Product 1", "Product 2"],
     "pain_indicators": [
-        {{"indicator": "...", "evidence": "..."}}
+        "Sign 1", "Sign 2"
     ],
     "buying_signals": [
-        {{"signal": "...", "evidence": "..."}}
+        "Signal 1", "Signal 2"
     ],
     "tech_stack_hints": ["Technology 1", "Technology 2"],
     "gtm_motion": "enterprise/smb/self-serve/hybrid",
@@ -87,26 +90,45 @@ class LeadIntelligenceAgent(BaseAgent):
                     f"{base_url}/jobs",
                 ])
             
-            # Scrape all pages
+            # Scrape all pages in parallel
+            scraped_results = await self.scraper.scrape_multiple(pages_to_scrape, max_concurrent=5)
+            
             all_content = []
             scraped_count = 0
             careers_content = None
             
-            for page_url in pages_to_scrape:
-                content = await self.scraper.scrape_url(page_url)
+            for page_url, content in scraped_results.items():
                 if content:
                     all_content.append(f"--- PAGE: {page_url} ---\n{content}")
                     scraped_count += 1
                     
                     # Track careers content separately for job signal analysis
                     if "/careers" in page_url or "/jobs" in page_url:
-                        careers_content = content
+                        if not careers_content: # Take the first one found
+                            careers_content = content
             
             if not all_content:
+                self.logger.warning("Could not scrape website, using empty safe fallback", domain=domain)
+                fallback_company = domain.split('.')[0].replace('-', ' ').title()
                 return {
-                    "success": False,
-                    "error": "Could not scrape any content from website",
+                    "company_overview": f"{fallback_company}. Note: Exact details not publicly available as the website could not be analyzed.",
+                    "industry": "Not publicly available",
+                    "offerings": [],
+                    "pain_indicators": [],
+                    "buying_signals": [],
+                    "tech_stack_hints": [],
+                    "gtm_motion": "Not publicly available",
+                    "company_size_estimate": "Not publicly available",
+                    "growth_stage": "Not publicly available",
+                    "success": True,
                     "domain": domain,
+                    "pages_analyzed": 0,
+                    "job_signals": {
+                        "relevant_roles": [],
+                        "hiring_intensity": "low",
+                        "tech_focus_areas": []
+                    },
+                    "analyzed_at": datetime.utcnow().isoformat()
                 }
             
             combined_content = "\n\n".join(all_content)
@@ -117,7 +139,11 @@ class LeadIntelligenceAgent(BaseAgent):
             
             # Analyze with LLM
             analysis = await self.openai_client.chat_json(
-                prompt=LEAD_ANALYSIS_PROMPT.format(content=combined_content),
+                prompt=LEAD_ANALYSIS_PROMPT.format(
+                    domain=domain,
+                    content_url_hint=url,
+                    content=combined_content
+                ),
                 system="You are an expert sales intelligence analyst. Extract actionable insights for sales outreach."
             )
             

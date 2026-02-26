@@ -78,12 +78,13 @@ class WebsiteAnalyzerAgent(BaseAgent):
                 base_url = url.rstrip("/")
                 pages_to_scrape.extend([f"{base_url}{path}" for path in important_paths])
             
-            # Scrape all pages
+            # Scrape all pages concurrently
+            results = await self.scraper.scrape_multiple(pages_to_scrape[:max_pages])
+            
             all_content = []
             scraped_count = 0
             
-            for page_url in pages_to_scrape[:max_pages]:
-                content = await self.scraper.scrape_url(page_url)
+            for page_url, content in results.items():
                 if content:
                     all_content.append(f"--- PAGE: {page_url} ---\n{content}")
                     scraped_count += 1

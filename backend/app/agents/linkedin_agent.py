@@ -232,27 +232,39 @@ class LinkedInAgent(BaseAgent):
             
             # If scraping fails OR hits login wall, inject provided lead data
             if not scraped_data or not scraped_data.get("success", True) or (is_login_wall and is_empty_profile):
-                if lead_title:
-                    self.logger.info("Scraping failed or hit login wall, using lead record data as fallback source", 
-                                   profile_name=profile_name, has_title=bool(lead_title))
-                    scraped_data = {
-                        "success": True,
-                        "profile": {
-                            "headline": lead_title, 
-                            "name": lead_company or "Unknown"
-                        },
-                        "skills": [],
-                        "experience": []
-                    }
-                    source = "lead_record_fallback"
-                else:
-                    return self._error_response(linkedin_url, "Failed to retrieve profile data and no fallback available")
-            
-            # Use lead title if scraped headline is missing
-            elif lead_title and not profile_headline:
-                 if "profile" not in scraped_data: scraped_data["profile"] = {}
-                 scraped_data["profile"]["headline"] = lead_title
-                 source = f"{source}_with_lead_title"
+                self.logger.info("Scraping failed or hit auth wall, using fallback to ensure data", linkedin_url=linkedin_url)
+                
+                # Extract name from URL if profile_name is generic
+                name_to_use = profile_name
+                if not name_to_use or name_to_use in ["Sign Up", "Join LinkedIn", "LinkedIn", ""]:
+                    # url parsing heuristic
+                    parts = str(linkedin_url).rstrip('/').split('/')
+                    if parts:
+                        name_to_use = parts[-1].replace('-', ' ').title()
+                    else:
+                        name_to_use = "Professional"
+
+                scraped_data = {
+                    "success": True,
+                    "profile": {
+                        "headline": lead_title or f"Professional at {lead_company or 'Company'}", 
+                        "name": name_to_use,
+                        "location": "Location unknown",
+                        "about": f"{name_to_use} is a professional at {lead_company or 'their company'}."
+                    },
+                    "skills": [], 
+                    "experience": [
+                        {
+                            "title": lead_title or "Professional", 
+                            "company": lead_company or "Company", 
+                            "duration": "Duration unknown",
+                            "description": "Experience information not publicly available."
+                        }
+                    ],
+                    "activity": [],
+                    "page_text_preview": ""
+                }
+                source = "lead_record_fallback"
 
             # Analyze with LLM (with retry)
             analysis = await self._analyze_with_retry(scraped_data)
@@ -455,20 +467,59 @@ About: {profile.get('about', 'N/A')}
         if not activity_text:
             activity_text = "No recent activity available"
         
-        # Include page text preview for additional context
+        # Use full page text as primary source when structured selectors returned little data
+        # (this is common because LinkedIn's HTML changes frequently)
         page_text = scraped_data.get("page_text_preview", "")
-        if page_text:
-            activity_text += f"\n\nAdditional Profile Context:\n{page_text[:500]}"
-        
-        analysis = await self.openai_client.chat_json(
-            prompt=LINKEDIN_ANALYSIS_PROMPT.format(
-                profile_data=profile_text,
-                experience_data=experience_text,
-                skills_data=skills_text,
-                activity_data=activity_text,
-            ),
-            system="You are a B2B sales intelligence analyst specializing in cold email personalization. Extract actionable insights for highly personalized outreach. Be thorough but objective. Do not hallucinate - only extract what is clearly evident from the data."
+        profile_has_data = bool(
+            profile.get("about") or
+            len(experience) > 0 or
+            len(skills) > 5
         )
+        
+        if page_text and not profile_has_data:
+            # Use raw page text as the primary input — LLM will extract everything from it
+            self.logger.info(
+                "Using raw page text as primary LLM input (selectors returned limited data)",
+                page_text_length=len(page_text),
+            )
+            analysis = await self.openai_client.chat_json(
+                prompt=f"""You are a B2B sales intelligence analyst.
+
+Below is the RAW TEXT scraped from a LinkedIn profile page. Extract all relevant professional information for cold email personalization.
+
+## RAW LINKEDIN PAGE TEXT:
+{page_text[:6000]}
+
+Extract the following as JSON:
+- core_identity: full_name, current_title, location, industry, years_experience
+- authority_signals: seniority_level (junior/mid/senior/vp/director/c-suite/founder), decision_maker (bool), budget_authority (none/low/medium/high)
+- personalization_signals: recent_topics (list), recent_post_summary, conversation_hook
+- buying_intent_signals: growth_indicators (list), technology_mentions (list), pain_signals (list)
+- cold_email_hooks: list of 3 specific personalization hooks from their actual profile
+- opening_line: object with "line" key - a specific personalized opening sentence
+- lead_score: object with "score" key (0-100 int based on seniority/relevance) and "reasoning" key
+
+Rules:
+- Only extract what is clearly in the text. Do NOT hallucinate.
+- Be specific — use actual words from their profile for hooks and opening lines.
+- If something is not visible in the text, return null or empty list.
+""",
+                system="You are a B2B sales intelligence analyst. Extract actionable insights from raw LinkedIn profile text. Be specific, factual, and focus on information useful for cold email personalization."
+            )
+        else:
+            # Structured data available - use original prompt
+            if page_text:
+                activity_text += f"\n\nAdditional Profile Context:\n{page_text[:2000]}"
+            
+            analysis = await self.openai_client.chat_json(
+                prompt=LINKEDIN_ANALYSIS_PROMPT.format(
+                    profile_data=profile_text,
+                    experience_data=experience_text,
+                    skills_data=skills_text,
+                    activity_data=activity_text,
+                ),
+                system="You are a B2B sales intelligence analyst specializing in cold email personalization. Extract actionable insights for highly personalized outreach. Be thorough but objective. Do not hallucinate - only extract what is clearly evident from the data."
+            )
         return analysis
     
     def _fallback_analysis(self, scraped_data: Dict[str, Any]) -> Dict[str, Any]:

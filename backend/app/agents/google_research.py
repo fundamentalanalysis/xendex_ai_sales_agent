@@ -43,6 +43,12 @@ For each relevant result, extract:
 3. How confident are you this is accurate? (0-1)
 4. What's the sales implication?
 
+IMPORTANT:
+- Only report triggers that are EXPLICITLY mentioned in the search results provided above.
+- Do NOT invent or hallucinate funding rounds, acquisitions, or partnerships.
+- Ensure the trigger refers to the exact company {company} and not a competitor with a similar name.
+- If there are no clear signals in the text, return "no_triggers": true and an empty list.
+
 Respond in JSON:
 {{
     "triggers_found": [
@@ -109,27 +115,40 @@ class GoogleResearchAgent(BaseAgent):
             all_triggers = []
             queries_run = []
             
-            for query_type, query in queries:
-                results = await self._search_and_analyze(
+            # Execute searches concurrently (major speedup)
+            tasks = []
+            for query_type, query in queries[:8]: # Limit to 8 most important queries to avoid rate limits
+                tasks.append(self._search_and_analyze(
                     company=company,
                     query=query,
                     query_type=query_type,
                     max_results=max_results_per_query,
-                )
-                
+                ))
+            
+            # Gather all results
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            all_triggers = []
+            queries_run = []
+            
+            for (query_type, query), results in zip(queries[:8], all_results):
+                if isinstance(results, Exception):
+                    self.logger.warning("Search task failed", query=query, error=str(results))
+                    continue
+                    
                 queries_run.append({
                     "query": query,
                     "type": query_type,
                 })
                 
-                if results.get("triggers_found"):
+                if results and results.get("triggers_found"):
                     all_triggers.extend(results["triggers_found"])
             
             # Deduplicate and rank triggers
             unique_triggers = self._deduplicate_triggers(all_triggers)
             ranked_triggers = sorted(
                 unique_triggers, 
-                key=lambda x: (x.get("confidence", 0), -x.get("recency_days", 999)),
+                key=lambda x: (x.get("confidence", 0), -(x.get("recency_days") or 999)),
                 reverse=True
             )
             

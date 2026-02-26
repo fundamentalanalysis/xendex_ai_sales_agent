@@ -1,4 +1,18 @@
-"""FastAPI application entry point."""
+import sys
+import asyncio
+
+# CRITICAL: Fix for Playwright/subprocesses on Windows
+# Must be at the very top before any async work or loop creation
+if sys.platform == 'win32':
+    try:
+        # If uvicorn already started the loop, we can't change the policy
+        # But we try anyway for the subprocesses
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
+
+import logging
+from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,31 +20,48 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from app.config import settings
-from app.api.routes import leads, in_sequence, drafts, research, analytics, health, templates, webhooks, debug, emails
-from app.dependencies import init_db
+from app.logging import setup_logging
+from app.api.routes import leads, in_sequence, drafts, research, analytics, health, templates, webhooks, debug, emails, scoring
+from app.dependencies import init_db, engine
 
+# Initialize logging before logger creation
+setup_logging()
 logger = structlog.get_logger()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
-    logger.info("Starting AI Sales Agent API")
+    loop_type = type(asyncio.get_running_loop()).__name__
+    logger.info("🚀 Starting AI Sales Agent API", 
+                server_time=datetime.utcnow().isoformat(),
+                event_loop=loop_type)
     await init_db()
+    
+    # Check Redis connection
+    try:
+        import redis
+        with redis.from_url(settings.get_redis_url) as r:
+            r.ping()
+            logger.info("✅ Redis Connection: SUCCESS")
+    except Exception as e:
+        logger.error("❌ Redis Connection: FAILED", error=str(e))
+        
     yield
+    
     logger.info("Shutting down AI Sales Agent API")
+    await engine.dispose()
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
         title="AI Sales Agent API",
-        description="Production-ready multi-agent sales outreach system",
-        version="0.1.0",
+        description="Backend API for AI-powered sales outreach",
+        version="1.0.0",
         lifespan=lifespan,
     )
-    
-    # CORS middleware
+
+    # Configure CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -38,23 +69,41 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Register routes
-    app.include_router(health.router, tags=["Health"])
     app.include_router(leads.router, prefix="/api/v1/leads", tags=["Leads"])
-    app.include_router(research.router, prefix="/api/v1/research", tags=["Research"])
-    app.include_router(in_sequence.router, prefix="/api/v1/in-sequence", tags=["In Sequence"])
+    app.include_router(in_sequence.router, prefix="/api/v1/in-sequence", tags=["Campaigns"])
     app.include_router(drafts.router, prefix="/api/v1/drafts", tags=["Drafts"])
-    app.include_router(templates.router, prefix="/api/v1/templates", tags=["Templates"])
+    app.include_router(research.router, prefix="/api/v1/research", tags=["Research"])
     app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
+    app.include_router(health.router, prefix="/api/v1/health", tags=["Health"])
+    app.include_router(templates.router, prefix="/api/v1/templates", tags=["Templates"])
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
     app.include_router(debug.router, prefix="/api/v1/debug", tags=["Debug"])
-    app.include_router(emails.router, prefix="/api/v1", tags=["Emails"])
+    app.include_router(emails.router, prefix="/api/v1/emails", tags=["Emails"])
+    app.include_router(scoring.router, prefix="/api/v1", tags=["Scoring"])
 
-    # Backend serves API only - frontend is served by Nginx on port 3000
-    logger.info("Backend running in API-only mode. Frontend served on port 3000.")
-    
+    @app.get("/")
+    async def root():
+        return {
+            "message": "AI Sales Agent API is running",
+            "docs": "/docs",
+            "version": "1.0.0",
+        }
+
     return app
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+    # Use config from server
+    logger.info("Backend running in API-only mode. Frontend served on port 3000.")
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info",
+    )

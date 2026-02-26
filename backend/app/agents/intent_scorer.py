@@ -187,7 +187,9 @@ class IntentScorer:
             for trigger in triggers:
                 trigger_type = trigger.get("type", "").lower()
                 confidence = trigger.get("confidence", 0.5)
-                recency_days = trigger.get("recency_days", 999)
+                recency_days = trigger.get("recency_days")
+                if recency_days is None:
+                    recency_days = 999
                 
                 # Base score for trigger
                 trigger_score = 0.0

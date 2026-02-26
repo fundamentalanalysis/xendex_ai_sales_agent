@@ -15,7 +15,7 @@ class WebScraper:
     Uses BeautifulSoup for parsing and httpx for async requests.
     """
     
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 20):
         self.timeout = timeout
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

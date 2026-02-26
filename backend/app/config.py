@@ -74,10 +74,16 @@ class Settings(BaseSettings):
     resend_from_name: str = "xendex"
     resend_reply_to: Optional[str] = None
     
-    # PhantomBuster
+    # PhantomBuster / LinkedIn Cookie  
     phantombuster_api_key: str = ""
     phantombuster_linkedin_phantom_id: str = ""
-    phantombuster_li_at: str = ""
+    phantombuster_li_at: str = ""  # LinkedIn li_at session cookie
+    linkedin_li_at: str = ""  # Direct LinkedIn cookie (alternative to phantombuster_li_at)
+    
+    @property
+    def linkedin_cookie(self) -> str:
+        """Get the LinkedIn li_at cookie from any available source."""
+        return self.linkedin_li_at or self.phantombuster_li_at or ""
     
     # Google Custom Search API (fallback)
     google_api_key: str = ""
@@ -94,7 +100,7 @@ class Settings(BaseSettings):
     unsubscribe_url: str = ""
     
     # Lead Qualification
-    qualification_threshold: float = 0.35  # 35% composite score to qualify
+    qualification_threshold: float = 0.60  # 60% composite score to qualify
     
     @property
     def cors_origins_list(self) -> List[str]:

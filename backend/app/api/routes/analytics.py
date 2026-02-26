@@ -32,12 +32,10 @@ async def get_overview_metrics(
 ):
     """Get dashboard overview metrics."""
     
-    # Lead counts by status - include ALL statuses
-    lead_counts = {}
-    for status in ["new", "researching", "qualified", "sequencing", "contacted", "replied", "converted", "completed", "disqualified", "inprogress"]:
-        stmt = select(func.count(Lead.id)).where(Lead.status == status)
-        result = await db.execute(stmt)
-        lead_counts[status] = result.scalar() or 0
+    # Use group_by to count all leads by status in a single query
+    stmt = select(Lead.status, func.count(Lead.id)).group_by(Lead.status)
+    result = await db.execute(stmt)
+    lead_counts = {status: count for status, count in result.all()}
     
     total_leads = sum(lead_counts.values())
     
@@ -105,10 +103,10 @@ async def get_overview_metrics(
     
     return OverviewMetrics(
         total_leads=total_leads,
-        leads_researched=lead_counts.get("qualified", 0) + lead_counts.get("researching", 0) + lead_counts.get("sequencing", 0) + lead_counts.get("contacted", 0) + lead_counts.get("completed", 0),
-        leads_qualified=lead_counts.get("qualified", 0) + lead_counts.get("researching", 0),
-        leads_in_sequence=lead_counts.get("sequencing", 0) + lead_counts.get("contacted", 0),
-        leads_contacted=lead_counts.get("contacted", 0) + lead_counts.get("sequencing", 0) + lead_counts.get("completed", 0) + lead_counts.get("replied", 0) + lead_counts.get("converted", 0),
+        leads_researched=total_leads - lead_counts.get("new", 0),
+        leads_qualified=lead_counts.get("qualified", 0) + lead_counts.get("sequencing", 0) + lead_counts.get("contacted", 0) + lead_counts.get("mail_sent", 0),
+        leads_in_sequence=lead_counts.get("sequencing", 0) + lead_counts.get("contacted", 0) + lead_counts.get("mail_sent", 0) + lead_counts.get("inprogress", 0),
+        leads_contacted=lead_counts.get("contacted", 0) + lead_counts.get("mail_sent", 0) + lead_counts.get("replied", 0) + lead_counts.get("converted", 0),
         leads_replied=lead_counts.get("replied", 0) + lead_counts.get("converted", 0),
         active_campaigns=active_campaigns,
         pending_approvals=pending_approvals,
