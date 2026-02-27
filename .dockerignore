@@ -1,19 +1,38 @@
-# Git & Docker ignores
-node_modules
-dist
-build
-.git
-.gitignore
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+.env
 
-__pycache__
-*.pyc
-.venv
-venv
-.pytest_cache
-.coverage
-htmlcov
+# Logs
+*.log
+backend/debug_output.txt
+backend/server.log
+backend/debug_error.log
+
+# Project specific clutter
+backend/unwanted_files/
+backend/tmp/
+backend/scripts/
+backend/.env
+
+# Node context
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+
+# Docker/System
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+.vscode/
+.idea/
+Thumbs.db
 .DS_Store
-backend/venv
-backend/__pycache__
-frontend/node_modules
-frontend/dist
